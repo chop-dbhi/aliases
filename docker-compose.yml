@@ -1,0 +1,16 @@
+version: "2"
+
+services:
+  redis:
+    image: redis:3.2.8-alpine
+    restart: always
+    command: redis-server --appendonly yes
+    ports:
+      - 6379:6379
+
+  ident:
+    build: .
+    restart: always
+    command: -http 0.0.0.0:8080 -redis redis:6379
+    ports:
+      - 8080:8080

@@ -1,0 +1,11 @@
+hash: 5f0c774470369d1775a0ab9ea9da47e018486bd6eadacaf4ed8506722d040ada
+updated: 2017-02-26T16:35:31.928666145-05:00
+imports:
+- name: github.com/garyburd/redigo
+  version: 0d253a66e6e1349f4581d6d2b300ee434ee2da9f
+  subpackages:
+  - internal
+  - redis
+- name: github.com/satori/go.uuid
+  version: 879c5887cd475cd7864858769793b2ceb0d44feb
+testImports: []

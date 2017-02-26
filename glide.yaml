@@ -1,0 +1,6 @@
+package: github.research.chop.edu/libi/aliases
+import:
+- package: github.com/garyburd/redigo
+  subpackages:
+  - redis
+- package: github.com/satori/go.uuid
