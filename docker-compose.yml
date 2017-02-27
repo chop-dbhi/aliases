@@ -9,8 +9,8 @@ services:
       - 6379:6379
 
   ident:
-    build: .
+    image: dbhi/aliases
     restart: always
-    command: -http 0.0.0.0:8080 -redis redis:6379
+    command: /aliases -http 0.0.0.0:8080 -redis redis:6379
     ports:
       - 8080:8080
