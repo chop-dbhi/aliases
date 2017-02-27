@@ -6,6 +6,12 @@ The primary use case is supplying an internal identifier and generating a random
 
 Alias generation is idempotent, that is, identifiers that have been seen before will return the same alias. Similar to one-way hashes, the API does not support taking an alias and returning the associated identifer. Thus in order to retrieve the alias, the client must have the identifier to begin with.
 
+Features:
+
+- Random character-based IDs or UUIDs.
+- Adding a prefix to the random portion of the alias.
+- Specifying a set of valid characters for generation.
+
 ## Example
 
 Send a POST request to the root with a newline delimited set of identifiers to generate aliases for. The order of the aliases will match the order of the identifiers.
