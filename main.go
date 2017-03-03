@@ -15,10 +15,11 @@ import (
 )
 
 var (
-	DefaultKeysHash    = "keys"
-	DefaultAliasesSet  = "aliases"
 	DefaultCharsMinlen = 8
 	DefaultCharsValid  = "abcdefghijklmnopqrstuvwzyz0123456789"
+
+	keyPrefix   = "k:"
+	aliasPrefix = "a:"
 
 	buildVersion string
 )
@@ -116,7 +117,7 @@ func makeRequestHandler(pool *redis.Pool, aliasGen *AliasGen) http.HandlerFunc {
 			key := s.Text()
 
 			// Check if the key already exists. If so, just return it.
-			alias, err := redis.String(conn.Do("HGET", DefaultKeysHash, key))
+			alias, err := redis.String(conn.Do("GET", keyPrefix+key))
 			// TODO: retry for certain errors.
 			if err != nil && err != redis.ErrNil {
 				w.WriteHeader(http.StatusServiceUnavailable)
@@ -124,52 +125,68 @@ func makeRequestHandler(pool *redis.Pool, aliasGen *AliasGen) http.HandlerFunc {
 				return
 			}
 
-			// No ident exists. Generate one.
-			if alias == "" {
-				var attempt int
-				maxAttempts := 100
+			// Exists. Write it out and go to the next one.
+			if alias != "" {
+				fmt.Fprintln(w, alias)
+				continue
+			}
 
-				for {
-					if attempt == maxAttempts {
-						// TODO: in theory, this should not occur assuming the min length
-						// has been increased proportionally to the aliases that have been
-						// issued.
-						w.WriteHeader(http.StatusInternalServerError)
-						fmt.Fprint(w, "reached max attempts")
-						return
-					}
+			// Generate one.
+			var attempt int
+			maxAttempts := 100
 
-					// Generate new key.
-					alias = aliasGen.New()
+			for {
+				if attempt == maxAttempts {
+					// TODO: in theory, this should not occur assuming the min length
+					// has been increased proportionally to the aliases that have been
+					// issued.
+					w.WriteHeader(http.StatusInternalServerError)
+					fmt.Fprint(w, "reached max attempts")
+					return
+				}
 
-					// Check if it exists, otherwise set it.
-					ok, err := redis.Bool(conn.Do("SISMEMBER", DefaultAliasesSet, alias))
+				attempt++
+
+				// Generate new key.
+				alias = aliasGen.New()
+
+				// Check if it exists, otherwise set it.
+				ok, err := redis.Bool(conn.Do("EXISTS", aliasPrefix+alias))
+				if err != nil && err != redis.ErrNil {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					fmt.Fprint(w, err.Error())
+					return
+				}
+
+				if !ok {
+					pKey := keyPrefix + key
+					pAlias := aliasPrefix + alias
+
+					// Watch these keys for concurrent sets.
+					conn.Send("WATCH", pKey, pAlias)
+
+					// Start transaction.
+					conn.Send("MULTI")
+
+					conn.Send("SET", pKey, alias)
+					conn.Send("SET", pAlias, true)
+
+					// Finish transaction.
+					reply, err := conn.Do("EXEC")
 					if err != nil && err != redis.ErrNil {
 						w.WriteHeader(http.StatusServiceUnavailable)
 						fmt.Fprint(w, err.Error())
-						return
 					}
 
-					if !ok {
-						// Start transaction.
-						conn.Send("MULTI")
-
-						conn.Send("HSET", DefaultKeysHash, key, alias)
-						conn.Send("SADD", DefaultAliasesSet, alias)
-
-						// Finish transaction.
-						_, err := conn.Do("EXEC")
-						if err != nil && err != redis.ErrNil {
-							w.WriteHeader(http.StatusServiceUnavailable)
-							fmt.Fprint(w, err.Error())
-						}
-
-						// TODO: add metric for number of attempts. this is an indicator
-						// to whether the min length should be increased.
-						break
+					// A nil reply implies a conflict with one of the keys. Try again.
+					// See: https://redis.io/commands/exec
+					if reply == nil {
+						continue
 					}
 
-					attempt++
+					// TODO: add metric for number of attempts. this is an indicator
+					// to whether the min length should be increased.
+					break
 				}
 			}
 
@@ -180,6 +197,7 @@ func makeRequestHandler(pool *redis.Pool, aliasGen *AliasGen) http.HandlerFunc {
 		if err := s.Err(); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			fmt.Fprint(w, err.Error())
+			return
 		}
 	}
 }
