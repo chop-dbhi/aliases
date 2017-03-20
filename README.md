@@ -11,6 +11,7 @@ Features:
 - Random character-based IDs or UUIDs.
 - Adding a prefix to the random portion of the alias.
 - Specifying a set of valid characters for generation.
+- Sequence generation
 
 ## Example
 
