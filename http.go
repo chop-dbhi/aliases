@@ -129,6 +129,7 @@ func makeGetDefHandler(s *Server) httprouter.Handle {
 func makeGenHandler(s *Server) httprouter.Handle {
 	return func(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
 		name := p.ByName("name")
+		readOnly := r.URL.Query().Get("ro") != ""
 
 		def, err := s.GetDef(name)
 		if err == ErrNoDef {
@@ -144,6 +145,16 @@ func makeGenHandler(s *Server) httprouter.Handle {
 		}
 
 		defer r.Body.Close()
+
+		if readOnly {
+			if err := s.Get(def, r.Body, w); err != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				fmt.Fprint(w, err.Error())
+				return
+			}
+
+			return
+		}
 
 		if err := s.Gen(def, r.Body, w); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)

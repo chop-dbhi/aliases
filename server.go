@@ -473,3 +473,34 @@ func (s *Server) Gen(def *Def, r io.Reader, w io.Writer) error {
 
 	return sr.Err()
 }
+
+func (s *Server) Get(def *Def, r io.Reader, w io.Writer) error {
+	conn := s.Pool.Get()
+	defer conn.Close()
+
+	sr := bufio.NewScanner(r)
+
+	for sr.Scan() {
+		key := sr.Text()
+
+		lookupKey := mk(keyPrefix, def.ID, key)
+
+		// Check if the key already exists. If so, just return it.
+		alias, err := redis.String(conn.Do("GET", lookupKey))
+
+		// Exists. Write it out and go to the next one.
+		if err == nil {
+			fmt.Fprintln(w, alias)
+			continue
+		}
+
+		if err != nil && err != redis.ErrNil {
+			return err
+		}
+
+		// Write an empty string.
+		fmt.Fprintln(w, "")
+	}
+
+	return sr.Err()
+}

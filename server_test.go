@@ -75,4 +75,21 @@ func TestServer(t *testing.T) {
 	if len(as) != 6 {
 		t.Errorf("expected 6 aliases, got %d", len(as))
 	}
+
+	r.Reset()
+	r.WriteString("a\nb\nc\nd\ne\nf")
+
+	if err := s.Get(def, &r, &w); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err = ioutil.ReadAll(&w)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	as = strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(as) != 6 {
+		t.Errorf("expected 6 aliases, got %d", len(as))
+	}
 }
