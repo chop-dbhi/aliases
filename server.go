@@ -28,6 +28,9 @@ var (
 	nameRegex  *regexp.Regexp
 	splitRegex *regexp.Regexp
 
+	// delimiter for return values
+	delimiter = " "
+
 	// Prefix for internal use.
 	internalPrefix = "_:%s"
 
@@ -422,7 +425,9 @@ func (s *Server) Gen(def *Def, r io.Reader, w io.Writer) error {
 
 		// Exists. Write it out and go to the next one.
 		if err == nil {
-			fmt.Fprintln(w, alias)
+			// Flag to indicate that this alias was already set
+			flag := "0"
+			fmt.Fprintln(w, (flag + delimiter + alias))
 			continue
 		}
 
@@ -457,12 +462,13 @@ func (s *Server) Gen(def *Def, r io.Reader, w io.Writer) error {
 
 			// Does not exist, set it.
 			if !ok {
+				flag := "1"
 				_, err := conn.Do("MSET", lookupKey, alias, checkKey, true)
 				if err != nil {
 					return err
 				}
 
-				fmt.Fprintln(w, alias)
+				fmt.Fprintln(w, (flag + delimiter + alias))
 
 				// TODO: add metric for number of attempts. this is an indicator
 				// to whether the min length should be increased.
@@ -478,6 +484,7 @@ func (s *Server) Get(def *Def, r io.Reader, w io.Writer) error {
 	conn := s.Pool.Get()
 	defer conn.Close()
 
+	flag := "0"
 	sr := bufio.NewScanner(r)
 
 	for sr.Scan() {
@@ -490,7 +497,7 @@ func (s *Server) Get(def *Def, r io.Reader, w io.Writer) error {
 
 		// Exists. Write it out and go to the next one.
 		if err == nil {
-			fmt.Fprintln(w, alias)
+			fmt.Fprintln(w, (flag + delimiter + alias))
 			continue
 		}
 
