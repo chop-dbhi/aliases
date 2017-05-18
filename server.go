@@ -28,9 +28,6 @@ var (
 	nameRegex  *regexp.Regexp
 	splitRegex *regexp.Regexp
 
-	// delimiter for return values
-	delimiter = " "
-
 	// Prefix for internal use.
 	internalPrefix = "_:%s"
 
