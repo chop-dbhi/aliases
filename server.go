@@ -422,7 +422,7 @@ func (s *Server) Gen(def *Def, r io.Reader, w io.Writer) error {
 
 		// Exists. Write it out and go to the next one.
 		if err == nil {
-			fmt.Fprintln(w, "1", alias)
+			fmt.Fprintln(w, "0", alias)
 			continue
 		}
 
@@ -462,7 +462,7 @@ func (s *Server) Gen(def *Def, r io.Reader, w io.Writer) error {
 					return err
 				}
 
-				fmt.Fprintln(w, "0", alias)
+				fmt.Fprintln(w, "1", alias)
 
 				// TODO: add metric for number of attempts. this is an indicator
 				// to whether the min length should be increased.
@@ -490,7 +490,7 @@ func (s *Server) Get(def *Def, r io.Reader, w io.Writer) error {
 
 		// Exists. Write it out and go to the next one.
 		if err == nil {
-			fmt.Fprintln(w, "1", alias)
+			fmt.Fprintln(w, "0", alias)
 			continue
 		}
 
@@ -499,7 +499,7 @@ func (s *Server) Get(def *Def, r io.Reader, w io.Writer) error {
 		}
 
 		// Write an empty string.
-		fmt.Fprintln(w, "")
+		fmt.Fprintln(w, "1")
 	}
 
 	return sr.Err()
