@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/julienschmidt/httprouter"
@@ -144,10 +146,17 @@ func makeGenHandler(s *Server) httprouter.Handle {
 			return
 		}
 
-		defer r.Body.Close()
+		var buf bytes.Buffer
+		if _, err := io.Copy(&buf, r.Body); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, err.Error())
+			return
+		}
+
+		r.Body.Close()
 
 		if readOnly {
-			if err := s.Get(def, r.Body, w); err != nil {
+			if err := s.Get(def, &buf, w); err != nil {
 				w.WriteHeader(http.StatusServiceUnavailable)
 				fmt.Fprint(w, err.Error())
 				return
@@ -156,7 +165,7 @@ func makeGenHandler(s *Server) httprouter.Handle {
 			return
 		}
 
-		if err := s.Gen(def, r.Body, w); err != nil {
+		if err := s.Gen(def, &buf, w); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			fmt.Fprint(w, err.Error())
 			return
@@ -181,9 +190,16 @@ func makePutHandler(s *Server) httprouter.Handle {
 			return
 		}
 
-		defer r.Body.Close()
+		var buf bytes.Buffer
+		if _, err := io.Copy(&buf, r.Body); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, err.Error())
+			return
+		}
 
-		if err := s.Put(def, r.Body); err != nil {
+		r.Body.Close()
+
+		if err := s.Put(def, &buf); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			fmt.Fprint(w, err.Error())
 			return
@@ -208,9 +224,16 @@ func makeDeleteHandler(s *Server) httprouter.Handle {
 			return
 		}
 
-		defer r.Body.Close()
+		var buf bytes.Buffer
+		if _, err := io.Copy(&buf, r.Body); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, err.Error())
+			return
+		}
 
-		if err := s.Del(def, r.Body); err != nil {
+		r.Body.Close()
+
+		if err := s.Del(def, &buf); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			fmt.Fprint(w, err.Error())
 			return
