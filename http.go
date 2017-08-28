@@ -1,14 +1,18 @@
 package main
 
 import (
-	"bytes"
+	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 
 	"github.com/julienschmidt/httprouter"
 )
+
+const applicationJson = "application/json"
 
 func makeCreateDefHandler(s *Server) httprouter.Handle {
 	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -76,7 +80,7 @@ func makeGetDefsHandler(s *Server) httprouter.Handle {
 			return
 		}
 
-		w.Header().Set("content-type", "application/json")
+		w.Header().Set("content-type", applicationJson)
 
 		if err := json.NewEncoder(w).Encode(defs); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -123,9 +127,48 @@ func makeGetDefHandler(s *Server) httprouter.Handle {
 			return
 		}
 
-		w.Header().Set("content-type", "application/json")
+		w.Header().Set("content-type", applicationJson)
 		w.Write(b)
 	}
+}
+
+func parseGenBody(mediaType string, r io.Reader) ([]*IdentAlias, error) {
+	// Decode request body containing the aliases.
+	var (
+		err    error
+		idents []*IdentAlias
+	)
+
+	switch mediaType {
+	case applicationJson:
+		var a []string
+		err = json.NewDecoder(r).Decode(&a)
+
+		idents = make([]*IdentAlias, len(a))
+
+		for i, ident := range a {
+			idents[i] = &IdentAlias{
+				Ident: ident,
+			}
+		}
+
+	default:
+		sc := bufio.NewScanner(r)
+
+		for sc.Scan() {
+			idents = append(idents, &IdentAlias{
+				Ident: sc.Text(),
+			})
+		}
+
+		err = sc.Err()
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return idents, nil
 }
 
 func makeGenHandler(s *Server) httprouter.Handle {
@@ -146,31 +189,105 @@ func makeGenHandler(s *Server) httprouter.Handle {
 			return
 		}
 
-		var buf bytes.Buffer
-		if _, err := io.Copy(&buf, r.Body); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+		mediaType, _, _ := mime.ParseMediaType(r.Header.Get("content-type"))
+
+		idents, err := parseGenBody(mediaType, r.Body)
+
+		r.Body.Close()
+
+		if err != nil {
+			w.WriteHeader(http.StatusUnprocessableEntity)
 			fmt.Fprint(w, err.Error())
 			return
 		}
 
-		r.Body.Close()
-
 		if readOnly {
-			if err := s.Get(def, &buf, w); err != nil {
+			idents, err = s.Get(def, idents)
+			if err != nil {
 				w.WriteHeader(http.StatusServiceUnavailable)
 				fmt.Fprint(w, err.Error())
 				return
 			}
 
+			switch mediaType {
+			case applicationJson:
+				w.Header().Set("content-type", applicationJson)
+				json.NewEncoder(w).Encode(idents)
+
+			default:
+				for _, ia := range idents {
+					switch ia.Status {
+					case StatusExists:
+						fmt.Fprintln(w, "1", ia.Alias)
+					case StatusMissing:
+						fmt.Fprintln(w, "0")
+					}
+				}
+			}
+
 			return
 		}
 
-		if err := s.Gen(def, &buf, w); err != nil {
+		idents, err = s.Gen(def, idents)
+		if err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			fmt.Fprint(w, err.Error())
 			return
 		}
+
+		switch mediaType {
+		case applicationJson:
+			w.Header().Set("content-type", applicationJson)
+			json.NewEncoder(w).Encode(idents)
+
+		default:
+			for _, ia := range idents {
+				switch ia.Status {
+				case StatusExists:
+					fmt.Fprintln(w, "0", ia.Alias)
+				case StatusCreated:
+					fmt.Fprintln(w, "1", ia.Alias)
+				}
+			}
+		}
 	}
+}
+
+func parsePutBody(mediaType string, r io.Reader) ([]*IdentAlias, error) {
+	var (
+		err    error
+		idents []*IdentAlias
+	)
+
+	switch mediaType {
+	case applicationJson:
+		err = json.NewDecoder(r).Decode(&idents)
+
+	default:
+		sr := bufio.NewScanner(r)
+
+		for sr.Scan() {
+			line := sr.Text()
+			toks := splitRegex.Split(line, 2)
+
+			if len(toks) != 2 {
+				return nil, errors.New("delimiter should match [\\s\\t,]+")
+			}
+
+			idents = append(idents, &IdentAlias{
+				Ident: string(toks[0]),
+				Alias: string(toks[1]),
+			})
+		}
+
+		err = sr.Err()
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return idents, nil
 }
 
 func makePutHandler(s *Server) httprouter.Handle {
@@ -190,21 +307,38 @@ func makePutHandler(s *Server) httprouter.Handle {
 			return
 		}
 
-		var buf bytes.Buffer
-		if _, err := io.Copy(&buf, r.Body); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+		mediaType, _, _ := mime.ParseMediaType(r.Header.Get("content-type"))
+
+		idents, err := parsePutBody(mediaType, r.Body)
+
+		r.Body.Close()
+
+		if err != nil {
+			w.WriteHeader(http.StatusUnprocessableEntity)
 			fmt.Fprint(w, err.Error())
 			return
 		}
 
-		r.Body.Close()
-
-		if err := s.Put(def, &buf); err != nil {
+		if err := s.Put(def, idents); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			fmt.Fprint(w, err.Error())
 			return
 		}
+
+		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+func parseDeleteBody(r io.Reader) ([]string, error) {
+	var a []string
+
+	sc := bufio.NewScanner(r)
+
+	for sc.Scan() {
+		a = append(a, sc.Text())
+	}
+
+	return a, sc.Err()
 }
 
 func makeDeleteHandler(s *Server) httprouter.Handle {
@@ -224,19 +358,32 @@ func makeDeleteHandler(s *Server) httprouter.Handle {
 			return
 		}
 
-		var buf bytes.Buffer
-		if _, err := io.Copy(&buf, r.Body); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprint(w, err.Error())
-			return
+		mediaType, _, _ := mime.ParseMediaType(r.Header.Get("content-type"))
+
+		var idents []string
+
+		switch mediaType {
+		case applicationJson:
+			err = json.NewDecoder(r.Body).Decode(&idents)
+
+		default:
+			idents, err = parseDeleteBody(r.Body)
 		}
 
 		r.Body.Close()
 
-		if err := s.Del(def, &buf); err != nil {
+		if err != nil {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			fmt.Fprint(w, err.Error())
+			return
+		}
+
+		if err := s.Del(def, idents); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			fmt.Fprint(w, err.Error())
 			return
 		}
+
+		w.WriteHeader(http.StatusNoContent)
 	}
 }

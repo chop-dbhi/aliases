@@ -1,11 +1,8 @@
 package main
 
 import (
-	"bytes"
-	"io/ioutil"
 	"os"
 	"strconv"
-	"strings"
 	"testing"
 )
 
@@ -44,11 +41,7 @@ func initServer(t testing.TB) *Server {
 func TestServer(t *testing.T) {
 	s := initServer(t)
 
-	var (
-		n = "test"
-		r bytes.Buffer
-		w bytes.Buffer
-	)
+	n := "test"
 
 	def := NewDef()
 	def.Name = n
@@ -59,37 +52,34 @@ func TestServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r.Reset()
-	r.WriteString("a\nb\nc\nd\ne\nf")
-
-	if err := s.Gen(def, &r, &w); err != nil {
-		t.Fatal(err)
+	idents := []*IdentAlias{
+		{Ident: "a"},
+		{Ident: "b"},
+		{Ident: "c"},
+		{Ident: "d"},
+		{Ident: "e"},
+		{Ident: "f"},
 	}
 
-	b, err := ioutil.ReadAll(&w)
+	idents, err := s.Gen(def, idents)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	as := strings.Split(strings.TrimSpace(string(b)), "\n")
-	if len(as) != 6 {
-		t.Errorf("expected 6 aliases, got %d", len(as))
+	for _, ia := range idents {
+		if ia.Alias == "" || ia.Status != StatusCreated {
+			t.Errorf("%s alias failed", ia.Ident)
+		}
 	}
 
-	r.Reset()
-	r.WriteString("a\nb\nc\nd\ne\nf")
-
-	if err := s.Get(def, &r, &w); err != nil {
-		t.Fatal(err)
-	}
-
-	b, err = ioutil.ReadAll(&w)
+	idents, err = s.Get(def, idents)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	as = strings.Split(strings.TrimSpace(string(b)), "\n")
-	if len(as) != 6 {
-		t.Errorf("expected 6 aliases, got %d", len(as))
+	for _, ia := range idents {
+		if ia.Alias == "" || ia.Status != StatusExists {
+			t.Errorf("%s alias missing", ia.Ident)
+		}
 	}
 }
