@@ -3,20 +3,11 @@ PROG_NAME := "aliases"
 IMAGE_NAME := "dbhi/aliases"
 
 GIT_SHA := $(shell git log -1 --pretty=format:"%h" .)
-GIT_TAG := $(shell git describe --tags --exact-match . 2>/dev/null)
+GIT_TAG := $(shell git describe --tags --exact-match 2>/dev/null)
 GIT_BRANCH := $(shell git symbolic-ref -q --short HEAD)
 GIT_VERSION := $(shell git log -1 --pretty=format:"%h (%ci)" .)
 
-setup: glide tls compiledaemon
-
-glide:
-	@if command -v glide &> /dev/null; then \
-		echo >&2 'Installing library dependences'; \
-		glide install; \
-	else \
-		echo >&2 'Glide required: https://glide.sh'; \
-		exit 1; \
-	fi
+setup: tls compiledaemon
 
 tls:
 	@if [ ! -a cert.pem ]; then \
