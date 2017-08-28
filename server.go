@@ -1,11 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"regexp"
@@ -49,6 +47,36 @@ func mk(f string, v ...interface{}) string {
 func init() {
 	nameRegex = regexp.MustCompile(`^[A-Za-z0-9-_\.]+$`)
 	splitRegex = regexp.MustCompile(`[\s,\t]+`)
+}
+
+const (
+	StatusExists = Status(iota + 1)
+	StatusCreated
+	StatusMissing
+)
+
+type Status int
+
+func (s Status) String() string {
+	switch s {
+	case StatusExists:
+		return "exists"
+	case StatusCreated:
+		return "created"
+	case StatusMissing:
+		return "missing"
+	}
+	return ""
+}
+
+func (s Status) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.String())
+}
+
+type IdentAlias struct {
+	Ident  string `json:"ident"`
+	Alias  string `json:"alias,omitempty"`
+	Status Status `json:"status,omitempty"`
 }
 
 type Server struct {
@@ -316,49 +344,139 @@ func (s *Server) UpdateDef(name string, def *Def) error {
 	return nil
 }
 
-// Put explicitly sets a set of IDs with an alias.
-func (s *Server) Put(def *Def, r io.Reader) error {
+func (s *Server) Gen(def *Def, idents []*IdentAlias) ([]*IdentAlias, error) {
 	conn := s.Pool.Get()
 	defer conn.Close()
 
-	var totalCount int
+	// Generator for this line.
+	gen := MakeGen(conn, def)
 
-	sr := bufio.NewScanner(r)
-
-	for sr.Scan() {
-		totalCount++
-
-		line := sr.Text()
-		toks := splitRegex.Split(line, 2)
-
-		if len(toks) != 2 {
-			return errors.New("delimiter should match [\\s\\t,]+")
+	for _, ia := range idents {
+		if ia.Ident == "" {
+			continue
 		}
 
-		key := string(toks[0])
-		alias := string(toks[1])
+		lookupKey := mk(keyPrefix, def.ID, ia.Ident)
+
+		// Check if the key already exists. If so, just return it.
+		alias, err := redis.String(conn.Do("GET", lookupKey))
+
+		// Exists.
+		if err == nil {
+			ia.Alias = alias
+			ia.Status = StatusExists
+			continue
+		}
+
+		if err != nil && err != redis.ErrNil {
+			return nil, err
+		}
+
+		var attempt int
+
+		for {
+			if attempt == MaxAttempts {
+				s.Log.Printf("max attempts reached for '%s' in '%s'", lookupKey, def.Name)
+				// TODO: auto-increase minlenth if this occurs.
+				return nil, ErrMaxAttemptsReached
+			}
+
+			attempt++
+
+			// Generate new key.
+			alias, err = gen.New()
+			if err != nil {
+				return nil, err
+			}
+
+			// Check if it exists, otherwise set it.
+			checkKey := mk(aliasPrefix, def.ID, alias)
+
+			ok, err := redis.Bool(conn.Do("EXISTS", checkKey))
+			if err != nil {
+				return nil, err
+			}
+
+			// Does not exist, set it.
+			if !ok {
+				_, err := conn.Do("MSET", lookupKey, alias, checkKey, true)
+				if err != nil {
+					return nil, err
+				}
+
+				ia.Alias = alias
+				ia.Status = StatusCreated
+
+				// TODO: add metric for number of attempts. this is an indicator
+				// to whether the min length should be increased.
+				break
+			}
+		}
+	}
+
+	return idents, nil
+}
+
+func (s *Server) Get(def *Def, idents []*IdentAlias) ([]*IdentAlias, error) {
+	conn := s.Pool.Get()
+	defer conn.Close()
+
+	for _, ia := range idents {
+		lookupKey := mk(keyPrefix, def.ID, ia.Ident)
+
+		// Check if the key already exists. If so, just return it.
+		alias, err := redis.String(conn.Do("GET", lookupKey))
+
+		// Exists.
+		if err == nil {
+			ia.Alias = alias
+			ia.Status = StatusExists
+			continue
+		}
+
+		if err != nil && err != redis.ErrNil {
+			return nil, err
+		}
+
+		ia.Status = StatusMissing
+	}
+
+	return idents, nil
+}
+
+// Put explicitly sets a set of IDs with an alias.
+func (s *Server) Put(def *Def, idents []*IdentAlias) error {
+	conn := s.Pool.Get()
+	defer conn.Close()
+
+	for _, ia := range idents {
+		if ia.Ident == "" {
+			continue
+		}
+
+		if ia.Alias == "" {
+			return errors.New("empty alias")
+		}
 
 		// key to alias
-		lookupKey := mk(keyPrefix, def.ID, key)
+		lookupKey := mk(keyPrefix, def.ID, ia.Ident)
 		// alias entry for existence check.
-		checkKey := mk(aliasPrefix, def.ID, alias)
+		checkKey := mk(aliasPrefix, def.ID, ia.Alias)
 
-		_, err := conn.Do("MSET", lookupKey, alias, checkKey, true)
+		_, err := conn.Do("MSET", lookupKey, ia.Alias, checkKey, true)
 		if err != nil {
 			return err
 		}
 	}
 
-	s.Log.Printf("put %d keys", totalCount)
+	s.Log.Printf("put %d keys", len(idents))
 
-	return sr.Err()
+	return nil
 }
 
-func (s *Server) Del(def *Def, r io.Reader) error {
+func (s *Server) Del(def *Def, idents []string) error {
 	conn := s.Pool.Get()
 	defer conn.Close()
-
-	sr := bufio.NewScanner(r)
 
 	var (
 		removedCount  int
@@ -367,10 +485,8 @@ func (s *Server) Del(def *Def, r io.Reader) error {
 		internalCount int
 	)
 
-	for sr.Scan() {
-		key := sr.Text()
-
-		lookupKey := mk(keyPrefix, def.ID, key)
+	for _, ident := range idents {
+		lookupKey := mk(keyPrefix, def.ID, ident)
 
 		// Get the corresponding alias.
 		alias, err := redis.String(conn.Do("GET", lookupKey))
@@ -400,107 +516,5 @@ func (s *Server) Del(def *Def, r io.Reader) error {
 	s.Log.Printf("%d conflicts", conflictCount)
 	s.Log.Printf("%d internal", internalCount)
 
-	return sr.Err()
-}
-
-func (s *Server) Gen(def *Def, r io.Reader, w io.Writer) error {
-	conn := s.Pool.Get()
-	defer conn.Close()
-
-	// Generator for this line.
-	gen := MakeGen(conn, def)
-
-	sr := bufio.NewScanner(r)
-
-	for sr.Scan() {
-		key := sr.Text()
-
-		lookupKey := mk(keyPrefix, def.ID, key)
-
-		// Check if the key already exists. If so, just return it.
-		alias, err := redis.String(conn.Do("GET", lookupKey))
-
-		// Exists. Write it out and go to the next one.
-		if err == nil {
-			fmt.Fprintln(w, "0", alias)
-			continue
-		}
-
-		if err != nil && err != redis.ErrNil {
-			return err
-		}
-
-		var attempt int
-
-		for {
-			if attempt == MaxAttempts {
-				s.Log.Printf("max attempts reached for '%s' in '%s'", lookupKey, def.Name)
-				// TODO: auto-increase minlenth if this occurs.
-				return ErrMaxAttemptsReached
-			}
-
-			attempt++
-
-			// Generate new key.
-			alias, err = gen.New()
-			if err != nil {
-				return err
-			}
-
-			// Check if it exists, otherwise set it.
-			checkKey := mk(aliasPrefix, def.ID, alias)
-
-			ok, err := redis.Bool(conn.Do("EXISTS", checkKey))
-			if err != nil {
-				return err
-			}
-
-			// Does not exist, set it.
-			if !ok {
-				_, err := conn.Do("MSET", lookupKey, alias, checkKey, true)
-				if err != nil {
-					return err
-				}
-
-				fmt.Fprintln(w, "1", alias)
-
-				// TODO: add metric for number of attempts. this is an indicator
-				// to whether the min length should be increased.
-				break
-			}
-		}
-	}
-
-	return sr.Err()
-}
-
-func (s *Server) Get(def *Def, r io.Reader, w io.Writer) error {
-	conn := s.Pool.Get()
-	defer conn.Close()
-
-	sr := bufio.NewScanner(r)
-
-	for sr.Scan() {
-		key := sr.Text()
-
-		lookupKey := mk(keyPrefix, def.ID, key)
-
-		// Check if the key already exists. If so, just return it.
-		alias, err := redis.String(conn.Do("GET", lookupKey))
-
-		// Exists. Write it out and go to the next one.
-		if err == nil {
-			fmt.Fprintln(w, "0", alias)
-			continue
-		}
-
-		if err != nil && err != redis.ErrNil {
-			return err
-		}
-
-		// Write an empty string.
-		fmt.Fprintln(w, "1")
-	}
-
-	return sr.Err()
+	return nil
 }
