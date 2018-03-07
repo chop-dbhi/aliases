@@ -23,10 +23,7 @@ func initServer(t testing.TB) *Server {
 		RedisAddr: os.Getenv("REDIS_ADDR"),
 		RedisDB:   int(db),
 	}
-
-	if err := s.Init(); err != nil {
-		t.Fatal(err)
-	}
+	s.Init()
 
 	// Flush the DB.
 	c := s.Pool.Get()

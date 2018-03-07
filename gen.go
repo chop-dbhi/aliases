@@ -11,17 +11,23 @@ import (
 )
 
 var (
+	// RandMinlen is the default alias length for random alias generators.
 	RandMinlen = 8
-	RandChars  = "abcdefghijklmnopqrstuvwzyz0123456789"
+	// RandChars is the default character set for random alias generators.
+	RandChars = "abcdefghijklmnopqrstuvwzyz0123456789"
 
+	// MinRandMinlen is the minimum alias length allowed for random alias generators.
 	MinRandMinlen = 4
-	MinRandChars  = 8
+	// MinRandChars is the minimum number of characters allowed in a random alias
+	// generator character set.
+	MinRandChars = 8
 )
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
+// Def is an alias generator definition.
 type Def struct {
 	// Internal ID of the definition.
 	ID int `json:"id"`
@@ -33,6 +39,7 @@ type Def struct {
 	Type string `json:"type"`
 
 	// Offset for seq generator.
+	// **NOT IMPLEMENTED**
 	Offset int64 `json:"offset"`
 
 	// Apply to rand generator.
@@ -40,9 +47,11 @@ type Def struct {
 	Minlen int    `json:"minlen"`
 	Prefix string `json:"prefix"`
 
+	// Whether the definition is archived or not.
 	Deleted bool `json:"archived"`
 }
 
+// NewDef returns a new alias generator definition with the default settings.
 func NewDef() *Def {
 	return &Def{
 		Chars:  RandChars,
@@ -50,6 +59,7 @@ func NewDef() *Def {
 	}
 }
 
+// MakeGen makes an alias generator from the given definition given a redis connection.
 func MakeGen(c redis.Conn, d *Def) Gen {
 	switch d.Type {
 	case "uuid":
@@ -74,6 +84,7 @@ func MakeGen(c redis.Conn, d *Def) Gen {
 	return nil
 }
 
+// Gen is an alias generator interface.
 type Gen interface {
 	New() (string, error)
 }
@@ -81,6 +92,7 @@ type Gen interface {
 // UUIDGen generates random UUIDs.
 type UUIDGen struct{}
 
+// New generates a new random UUID.
 func (g *UUIDGen) New() (string, error) {
 	return uuid.NewV4().String(), nil
 }
@@ -94,6 +106,7 @@ type RandGen struct {
 	charlen int
 }
 
+// New generates a new random alias.
 func (g *RandGen) New() (string, error) {
 	key := make([]byte, g.Minlen)
 
@@ -110,6 +123,7 @@ func (g *RandGen) New() (string, error) {
 	return fmt.Sprintf("%s%s", g.Prefix, alias), nil
 }
 
+// SeqGen is a sequential alias generator.
 type SeqGen struct {
 	Name   string
 	Offset int64
@@ -117,6 +131,7 @@ type SeqGen struct {
 	conn redis.Conn
 }
 
+// New generates a new sequential alias.
 func (g *SeqGen) New() (string, error) {
 	id, err := redis.Int64(g.conn.Do("INCR", seqPrefix+g.Name))
 	if err != nil && err != redis.ErrNil {
