@@ -83,6 +83,7 @@ type Server struct {
 	RedisAddr string
 	RedisDB   int
 	RedisPass string
+	RedisTLS  bool
 
 	Log  *log.Logger
 	Pool *redis.Pool
@@ -100,23 +101,13 @@ func (s *Server) Init() error {
 	// Create a pool of Redis connections.
 	s.Pool = &redis.Pool{
 		Dial: func() (redis.Conn, error) {
-			conn, err := redis.Dial("tcp", s.RedisAddr)
-			if err != nil {
-				return nil, err
-			}
-
-			// Password to authenticate.
-			if s.RedisPass != "" {
-				if _, err := conn.Do("AUTH", s.RedisPass); err != nil {
-					return nil, err
-				}
-			}
-
-			if _, err := conn.Do("SELECT", s.RedisDB); err != nil {
-				return nil, err
-			}
-
-			return conn, nil
+			return redis.Dial(
+				"tcp",
+				s.RedisAddr,
+				redis.DialDatabase(s.RedisDB),
+				redis.DialPassword(s.RedisPass),
+				redis.DialUseTLS(s.RedisTLS),
+			)
 		},
 		IdleTimeout: DefaultIdleTimeout,
 		MaxIdle:     DefaultMaxIdle,
