@@ -19,8 +19,8 @@ func main() {
 		redisTLS  bool
 
 		httpAddr    string
-		httpTlsKey  string
-		httpTlsCert string
+		httpTLSKey  string
+		httpTLSCert string
 
 		showVersion bool
 	)
@@ -31,8 +31,8 @@ func main() {
 	flag.BoolVar(&redisTLS, "redis.tls", false, "Redis TLS connection.")
 
 	flag.StringVar(&httpAddr, "http", "127.0.0.1:8080", "HTTP bind address.")
-	flag.StringVar(&httpTlsKey, "http.tls.key", "", "TLS key file.")
-	flag.StringVar(&httpTlsCert, "http.tls.cert", "", "TLS certificate file.")
+	flag.StringVar(&httpTLSKey, "http.tls.key", "", "TLS key file.")
+	flag.StringVar(&httpTLSCert, "http.tls.cert", "", "TLS certificate file.")
 
 	flag.BoolVar(&showVersion, "version", false, "Print the program version")
 
@@ -49,10 +49,7 @@ func main() {
 	s.RedisDB = redisDB
 	s.RedisPass = redisPass
 	s.RedisTLS = redisTLS
-
-	if err := s.Init(); err != nil {
-		log.Fatal(err)
-	}
+	s.Init()
 
 	defer s.Close()
 
@@ -70,8 +67,8 @@ func main() {
 	mux.DELETE("/keys/:name", makeDeleteHandler(&s))
 
 	log.Printf("HTTP listening on %s", httpAddr)
-	if httpTlsKey != "" {
-		log.Fatal(http.ListenAndServeTLS(httpAddr, httpTlsCert, httpTlsKey, mux))
+	if httpTLSKey != "" {
+		log.Fatal(http.ListenAndServeTLS(httpAddr, httpTLSCert, httpTLSKey, mux))
 	} else {
 		log.Fatal(http.ListenAndServe(httpAddr, mux))
 	}

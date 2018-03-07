@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"regexp"
@@ -13,17 +14,32 @@ import (
 )
 
 var (
+	// DefaultIdleTimeout sets the duration after which idle Redis connections
+	// in the pool are closed.
 	DefaultIdleTimeout = 5 * time.Minute
-	DefaultMaxIdle     = 3
+	// DefaultMaxIdle is the number of idle Redis connections allowed in the pool.
+	DefaultMaxIdle = 3
 
-	ErrNoDef      = errors.New("no def")
-	ErrDefExists  = errors.New("def exists")
+	// ErrNoDef is returned when a user attempts to get a definition that does
+	// not exist.
+	ErrNoDef = errors.New("no def")
+	// ErrDefExists is returned when the user attempts to create a definition
+	// that already exists.
+	ErrDefExists = errors.New("def exists")
+	// ErrBadDefName is returned when a user attempts to create a definition
+	// with a bad name.
 	ErrBadDefName = errors.New("name may only contain [A-Za-z0-9-_.] chars")
 
-	MaxAttempts           = 100
+	// MaxAttempts is the max number of alias generation attempts to make
+	// before giving up on finding a new, unused, alias.
+	MaxAttempts = 100
+	// ErrMaxAttemptsReached is returned if MaxAttempts generation attempts
+	// are made and all of the generated aliases already exist.
 	ErrMaxAttemptsReached = errors.New("max attempts reached")
 
-	nameRegex  *regexp.Regexp
+	// Def name validation regex.
+	nameRegex *regexp.Regexp
+	// Unused regex?
 	splitRegex *regexp.Regexp
 
 	// Prefix for internal use.
@@ -49,14 +65,17 @@ func init() {
 	splitRegex = regexp.MustCompile(`[\s,\t]+`)
 }
 
+// Status constants to communicate the state of the underlying key.
 const (
 	StatusExists = Status(iota + 1)
 	StatusCreated
 	StatusMissing
 )
 
+// Status represents the state of some key underlying the service.
 type Status int
 
+// String returns a string representation of a Status.
 func (s Status) String() string {
 	switch s {
 	case StatusExists:
@@ -69,16 +88,20 @@ func (s Status) String() string {
 	return ""
 }
 
+// MarshalJSON returns a JSON representation of a Status.
 func (s Status) MarshalJSON() ([]byte, error) {
 	return json.Marshal(s.String())
 }
 
+// IdentAlias represents an identity and an alias for that identity along
+// with the state of the underlying key representing it.
 type IdentAlias struct {
 	Ident  string `json:"ident"`
 	Alias  string `json:"alias,omitempty"`
 	Status Status `json:"status,omitempty"`
 }
 
+// Server serves the alias service.
 type Server struct {
 	RedisAddr string
 	RedisDB   int
@@ -89,13 +112,22 @@ type Server struct {
 	Pool *redis.Pool
 }
 
-func (s *Server) Close() {
-	if s.Pool != nil {
-		s.Pool.Close()
+func (s *Server) handleClose(c io.Closer) {
+	err := c.Close()
+	if err != nil {
+		s.Log.Printf("close error: %s\n", err)
 	}
 }
 
-func (s *Server) Init() error {
+// Close shuts down the server.
+func (s *Server) Close() {
+	if s.Pool != nil {
+		s.handleClose(s.Pool)
+	}
+}
+
+// Init initializes a new server.
+func (s *Server) Init() {
 	s.Log = log.New(os.Stderr, "aliases: ", 0)
 
 	// Create a pool of Redis connections.
@@ -112,13 +144,12 @@ func (s *Server) Init() error {
 		IdleTimeout: DefaultIdleTimeout,
 		MaxIdle:     DefaultMaxIdle,
 	}
-
-	return nil
 }
 
+// GetDefs retrieves multiple existing alias generation definitions.
 func (s *Server) GetDefs() ([]json.RawMessage, error) {
 	conn := s.Pool.Get()
-	defer conn.Close()
+	defer s.handleClose(conn)
 
 	// Keys of the definitions.
 	keys, err := redis.Strings(conn.Do("KEYS", "v:*"))
@@ -164,7 +195,7 @@ func (s *Server) DelDef(name string) error {
 	}
 
 	conn := s.Pool.Get()
-	defer conn.Close()
+	defer s.handleClose(conn)
 
 	// Delete name entry to make inaccessable and update definition.
 	conn.Send("MULTI")
@@ -179,9 +210,10 @@ func (s *Server) DelDef(name string) error {
 	return nil
 }
 
+// GetDef retrieves an existing alias generation definition.
 func (s *Server) GetDef(name string) (*Def, error) {
 	conn := s.Pool.Get()
-	defer conn.Close()
+	defer s.handleClose(conn)
 
 	id, err := redis.Int64(conn.Do("GET", mk(defPrefix, name)))
 	if err == redis.ErrNil {
@@ -248,7 +280,7 @@ func (s *Server) CreateDef(def *Def) error {
 
 	// Check if there is an existing definition.
 	conn := s.Pool.Get()
-	defer conn.Close()
+	defer s.handleClose(conn)
 
 	// Lookup up def by name.
 	defKey := mk(defPrefix, def.Name)
@@ -264,8 +296,8 @@ func (s *Server) CreateDef(def *Def) error {
 	}
 
 	// Get a new key.
-	defIdKey := mk(internalPrefix, "def:id")
-	id, err := redis.Int64(conn.Do("INCR", defIdKey))
+	defIDKey := mk(internalPrefix, "def:id")
+	id, err := redis.Int64(conn.Do("INCR", defIDKey))
 	if err != nil {
 		return err
 	}
@@ -300,6 +332,7 @@ func (s *Server) CreateDef(def *Def) error {
 	return nil
 }
 
+// UpdateDef updates an existing alias generation definition.
 func (s *Server) UpdateDef(name string, def *Def) error {
 	if err := s.validateDef(def); err != nil {
 		return err
@@ -307,7 +340,7 @@ func (s *Server) UpdateDef(name string, def *Def) error {
 
 	// Check if there is an existing definition.
 	conn := s.Pool.Get()
-	defer conn.Close()
+	defer s.handleClose(conn)
 
 	b, err := json.Marshal(def)
 	if err != nil {
@@ -335,9 +368,12 @@ func (s *Server) UpdateDef(name string, def *Def) error {
 	return nil
 }
 
+// Gen generates a new alias for a slice of identities, given an existing definition.
+// It will keep trying to find a new, unused, alias for MaxAttempts before
+// returning ErrMaxAttemptsReached.
 func (s *Server) Gen(def *Def, idents []*IdentAlias) ([]*IdentAlias, error) {
 	conn := s.Pool.Get()
-	defer conn.Close()
+	defer s.handleClose(conn)
 
 	// Generator for this line.
 	gen := MakeGen(conn, def)
@@ -408,9 +444,10 @@ func (s *Server) Gen(def *Def, idents []*IdentAlias) ([]*IdentAlias, error) {
 	return idents, nil
 }
 
+// Get retrieves existing aliases for a slice of identities in a given alias definition.
 func (s *Server) Get(def *Def, idents []*IdentAlias) ([]*IdentAlias, error) {
 	conn := s.Pool.Get()
-	defer conn.Close()
+	defer s.handleClose(conn)
 
 	for _, ia := range idents {
 		lookupKey := mk(keyPrefix, def.ID, ia.Ident)
@@ -438,7 +475,7 @@ func (s *Server) Get(def *Def, idents []*IdentAlias) ([]*IdentAlias, error) {
 // Put explicitly sets a set of IDs with an alias.
 func (s *Server) Put(def *Def, idents []*IdentAlias) error {
 	conn := s.Pool.Get()
-	defer conn.Close()
+	defer s.handleClose(conn)
 
 	for _, ia := range idents {
 		if ia.Ident == "" {
@@ -465,9 +502,10 @@ func (s *Server) Put(def *Def, idents []*IdentAlias) error {
 	return nil
 }
 
+// Del deletes a slice of identities from an alias generation definition.
 func (s *Server) Del(def *Def, idents []string) error {
 	conn := s.Pool.Get()
-	defer conn.Close()
+	defer s.handleClose(conn)
 
 	var (
 		removedCount  int

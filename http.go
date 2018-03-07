@@ -12,7 +12,7 @@ import (
 	"github.com/julienschmidt/httprouter"
 )
 
-const applicationJson = "application/json"
+const applicationJSON = "application/json"
 
 func makeCreateDefHandler(s *Server) httprouter.Handle {
 	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -80,7 +80,7 @@ func makeGetDefsHandler(s *Server) httprouter.Handle {
 			return
 		}
 
-		w.Header().Set("content-type", applicationJson)
+		w.Header().Set("content-type", applicationJSON)
 
 		if err := json.NewEncoder(w).Encode(defs); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -127,7 +127,7 @@ func makeGetDefHandler(s *Server) httprouter.Handle {
 			return
 		}
 
-		w.Header().Set("content-type", applicationJson)
+		w.Header().Set("content-type", applicationJSON)
 		w.Write(b)
 	}
 }
@@ -140,7 +140,7 @@ func parseGenBody(mediaType string, r io.Reader) ([]*IdentAlias, error) {
 	)
 
 	switch mediaType {
-	case applicationJson:
+	case applicationJSON:
 		var a []string
 		err = json.NewDecoder(r).Decode(&a)
 
@@ -210,8 +210,8 @@ func makeGenHandler(s *Server) httprouter.Handle {
 			}
 
 			switch mediaType {
-			case applicationJson:
-				w.Header().Set("content-type", applicationJson)
+			case applicationJSON:
+				w.Header().Set("content-type", applicationJSON)
 				json.NewEncoder(w).Encode(idents)
 
 			default:
@@ -236,8 +236,8 @@ func makeGenHandler(s *Server) httprouter.Handle {
 		}
 
 		switch mediaType {
-		case applicationJson:
-			w.Header().Set("content-type", applicationJson)
+		case applicationJSON:
+			w.Header().Set("content-type", applicationJSON)
 			json.NewEncoder(w).Encode(idents)
 
 		default:
@@ -260,7 +260,7 @@ func parsePutBody(mediaType string, r io.Reader) ([]*IdentAlias, error) {
 	)
 
 	switch mediaType {
-	case applicationJson:
+	case applicationJSON:
 		err = json.NewDecoder(r).Decode(&idents)
 
 	default:
@@ -363,7 +363,7 @@ func makeDeleteHandler(s *Server) httprouter.Handle {
 		var idents []string
 
 		switch mediaType {
-		case applicationJson:
+		case applicationJSON:
 			err = json.NewDecoder(r.Body).Decode(&idents)
 
 		default:
